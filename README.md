@@ -10,6 +10,32 @@ A classic Tic-Tac-Toe game in Python for two players on separate computers to pl
 
 The GUI will be built with PySide6.
 
+## HOW TO SET UP DEV ENVIRONMENT
+
+create an environment called `venv` or whatever you want
+```sh
+python -m venv venv
+```
+
+execute the activation script. on unix devices it is inside `venv/bin/activate`
+
+on unix:
+```sh
+source venv/bin/activate
+```
+
+on windows:
+```sh
+.\venv\Scripts\activate
+```
+
+install the pip requirements through the list on requirements.txt
+the following command will install all packages in this file:
+```sh
+pip install -r requirements.txt
+```
+
+
 ## Goals
 
 - Implement a fully functional two-player Tic-Tac-Toe game.
