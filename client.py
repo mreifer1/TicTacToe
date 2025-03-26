@@ -1,11 +1,78 @@
 import sys
-from PySide6.QtWidgets import QApplication, QMainWindow, QGridLayout, QWidget, QPushButton, QVBoxLayout, QLabel, QHBoxLayout, QMenuBar, QMenu
+from PySide6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QGridLayout,
+    QWidget,
+    QPushButton,
+    QVBoxLayout,
+    QLabel,
+    QHBoxLayout,
+    QMenuBar,
+    QMenu,
+)
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QPalette, QColor, QAction
+from PySide6.QtGui import QAction
+
+class GameLogic:
+    def __init__(self):
+        self.board_size = 3
+        self.current_player = 'X'
+        self.game_board = [['' for _ in range(self.board_size)] for _ in range(self.board_size)]
+        self.game_over = False
+
+    def button_clicked(self, row, col):
+        if not self.game_over and self.game_board[row][col] == '':
+            self.game_board[row][col] = self.current_player
+            if self.check_win(self.current_player):
+                self.game_over = True
+                return f"Player {self.current_player} wins!"
+            elif self.check_draw():
+                self.game_over = True
+                return "It's a draw!"
+            else:
+                self._switch_player()
+                return f"Current Player: {self.current_player}"
+        return None
+
+    def _switch_player(self):
+        self.current_player = 'O' if self.current_player == 'X' else 'X'
+
+    def check_win(self, player):
+        board = self.game_board
+        size = self.board_size
+        # Check rows
+        for row in board:
+            if all(cell == player for cell in row):
+                return True
+        # Check columns
+        for col in range(size):
+            if all(board[row][col] == player for row in range(size)):
+                return True
+        # Check diagonals
+        if all(board[i][i] == player for i in range(size)):
+            return True
+        if all(board[i][size - 1 - i] == player for i in range(size)):
+            return True
+        return False
+
+    def check_draw(self):
+        return all(cell != '' for row in self.game_board for cell in row)
+
+    def reset_game(self):
+        self.current_player = 'X'
+        self.game_board = [['' for _ in range(self.board_size)] for _ in range(self.board_size)]
+        self.game_over = False
+        return f"Current Player: {self.current_player}"
 
 class TicTacToeWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.game_logic = GameLogic()
+        self._setup_ui()
+        self._update_message(self.game_logic.current_player)
+
+    def _setup_ui(self):
         self.setWindowTitle("Tic-Tac-Toe")
         self.setGeometry(100, 100, 400, 300)
 
@@ -13,7 +80,13 @@ class TicTacToeWindow(QMainWindow):
         self.setCentralWidget(self.central_widget)
 
         self.main_layout = QVBoxLayout(self.central_widget)
+        self._create_menu_bar()
+        self._create_game_board()
+        self._create_controls()
+        self.main_layout.addWidget(self.board_widget)
+        self.main_layout.addWidget(self.controls_bottom_widget)
 
+    def _create_menu_bar(self):
         menu_bar = QMenuBar()
         game_menu = QMenu("Game", self)
         reset_action = QAction("New Game", self)
@@ -26,42 +99,26 @@ class TicTacToeWindow(QMainWindow):
         menu_bar.addMenu(game_menu)
         self.setMenuBar(menu_bar)
 
-        content_layout = QHBoxLayout()
-
-        self.controls_panel = QWidget()
-        self.controls_layout = QVBoxLayout(self.controls_panel)
-
-        self.reset_button = QPushButton("Reset Game")
-        self.reset_button.clicked.connect(self.reset_game)
-
-        self.message_label = QLabel("Welcome!")
-        self.controls_layout.addWidget(self.message_label)
-        self.controls_layout.addWidget(self.reset_button)
-
-        self.controls_layout.addStretch(1)
-
-        # Tic-Tac-Toe Board
+    def _create_game_board(self):
         self.board_widget = QWidget()
         self.grid_layout = QGridLayout(self.board_widget)
-        self.grid_layout.setSpacing(2) # Add spacing for grid lines
-
-        self.board_widget.setStyleSheet("background-color: #000;") # Black background for grid lines
-
+        self.grid_layout.setSpacing(2)
+        self.board_widget.setStyleSheet("background-color: #000;")
         self.buttons = []
-        for row in range(3):
+        for row in range(self.game_logic.board_size):
             row_buttons = []
-            for col in range(3):
+            for col in range(self.game_logic.board_size):
                 button = QPushButton("")
-                button.setMinimumSize(QSize(80, 80)) # Adjust button size
+                button.setMinimumSize(QSize(80, 80))
                 button.setStyleSheet("""
                     QPushButton {
                         background-color: white;
-                        border: none; /* Remove button borders */
-                        font-size: 36px; /* Adjust font size */
+                        border: none;
+                        font-size: 36px;
                         font-weight: bold;
                     }
                     QPushButton:hover {
-                        background-color: #f0f0f0; /* Lighter gray on hover */
+                        background-color: #f0f0f0;
                     }
                     QPushButton:disabled {
                         background-color: #e0e0e0;
@@ -73,78 +130,41 @@ class TicTacToeWindow(QMainWindow):
                 row_buttons.append(button)
             self.buttons.append(row_buttons)
 
-        content_layout.addWidget(self.board_widget)
-
-        
-        controls_bottom_widget = QWidget()
-        controls_bottom_layout = QHBoxLayout(controls_bottom_widget)
+    def _create_controls(self):
+        self.controls_bottom_widget = QWidget()
+        controls_bottom_layout = QHBoxLayout(self.controls_bottom_widget)
+        self.message_label = QLabel("Welcome!")
+        self.reset_button = QPushButton("Reset Game")
+        self.reset_button.clicked.connect(self.reset_game)
         controls_bottom_layout.addWidget(self.message_label)
         controls_bottom_layout.addWidget(self.reset_button)
         controls_bottom_layout.addStretch(1)
 
-        self.main_layout.addLayout(content_layout)
-        self.main_layout.addWidget(controls_bottom_widget)
-
-        self.current_player = 'X'
-        self.game_board = [['' for _ in range(3)] for _ in range(3)]
-        self.game_over = False
-        self.update_message()
-    
     def button_clicked(self, row, col):
-        if not self.game_over and self.game_board[row][col] == '':
-            self.buttons[row][col].setText(self.current_player)
-            self.game_board[row][col] = self.current_player
+        result = self.game_logic.button_clicked(row, col)
+        if result:
+            self.buttons[row][col].setText(self.game_logic.game_board[row][col])
             self.buttons[row][col].setEnabled(False)
-
-            if self.check_win(self.current_player):
-                self.game_over = True
-                self.show_game_over_message(f"Player {self.current_player} wins!", win=True)
-            elif self.check_draw():
-                self.game_over = True
-                self.show_game_over_message("It's a draw!")
+            if "wins" in result or "draw" in result:
+                self._show_game_over_message(result, "wins" in result)
             else:
-                self.switch_player()
-                self.update_message()
+                self._update_message(result)
 
-    def switch_player(self):
-        if self.current_player == 'X':
-            self.current_player = 'O'
-        else:
-            self.current_player = 'X'
-
-    def check_win(self, player):
-        for row in self.game_board:
-            if all(cell == player for cell in row):
-                return True
-        for col in range(3):
-            if all(self.game_board[row][col] == player for row in range(3)):
-                return True
-        if all(self.game_board[i][i] == player for i in range(3)):
-            return True
-        if all(self.game_board[i][2 - i] == player for i in range(3)):
-            return True
-        return False
-
-    def check_draw(self):
-        return all(cell != '' for row in self.game_board for cell in row)
-
-    def show_game_over_message(self, message, win=False):
+    def _show_game_over_message(self, message, win):
         if win:
             self.message_label.setStyleSheet("color: green; font-weight: bold;")
         else:
             self.message_label.setStyleSheet("color: black; font-weight: bold;")
         self.message_label.setText(message)
-        self.disable_all_buttons()
+        self._disable_all_buttons()
 
-    def disable_all_buttons(self):
+    def _disable_all_buttons(self):
         for row_buttons in self.buttons:
             for button in row_buttons:
                 button.setEnabled(False)
 
     def reset_game(self):
-        self.current_player = 'X'
-        self.game_board = [['' for _ in range(3)] for _ in range(3)]
-        self.game_over = False
+        message = self.game_logic.reset_game()
         for row_buttons in self.buttons:
             for button in row_buttons:
                 button.setText("")
@@ -164,15 +184,12 @@ class TicTacToeWindow(QMainWindow):
                         color: black;
                     }
                 """)
-        self.update_message()
+        self._update_message(message)
         self.message_label.setStyleSheet("")
 
-    def update_message(self, message=None):
-        if message:
-            self.message_label.setText(message)
-        else:
-            self.message_label.setText(f"Current Player: {self.current_player}")
-            self.message_label.setStyleSheet("")
+    def _update_message(self, message):
+        self.message_label.setText(f"Current Player: {message}")
+        self.message_label.setStyleSheet("")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
