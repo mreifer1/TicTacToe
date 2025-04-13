@@ -109,4 +109,4 @@ class TicTacToe:
                 print("-----------")
 
 game = TicTacToe()
-game.connect_to_game("localhost", 9999)
+game.connect_to_game("192.168.1.157", 9999)
