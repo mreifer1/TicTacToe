@@ -96,7 +96,7 @@ class TicTacToe:
             return True
         
         if self.board[0][2] == self.board[1][1] == self.board[2][0] != " ":
-            self.winner = self.board[0][0]
+            self.winner = self.board[0][2]
             self.game_over = True
             return True
         

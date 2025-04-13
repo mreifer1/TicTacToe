@@ -97,7 +97,7 @@ class TicTacToe:
             return True
         
         if self.board[0][2] == self.board[1][1] == self.board[2][0] != " ":
-            self.winner = self.board[0][0]
+            self.winner = self.board[0][2]
             self.game_over = True
             return True
         
@@ -110,4 +110,4 @@ class TicTacToe:
                 print("-----------")
 
 game = TicTacToe()
-game.host_game("localhost", 9999)
+game.host_game("192.168.1.157", 9999)
