@@ -1,351 +1,26 @@
-import sys
 import socket
-import threading
-import time
+from ..game_logic import GameLogic
+from ..ui.board_widget import BoardWidget
+from ..network import NetworkWorker
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QMenuBar, QMenu, QLineEdit, QRadioButton,
-    QGroupBox, QMessageBox,
+    QMainWindow, 
+    QWidget, 
+    QVBoxLayout, 
+    QHBoxLayout,
+    QPushButton, 
+    QLabel, 
+    QMenuBar, 
+    QMenu, 
+    QLineEdit, 
+    QRadioButton,
+    QGroupBox, 
+    QMessageBox,
     QSizePolicy
 )
-from PySide6.QtCore import QSize, Qt, QPointF, QThread, Signal, Slot, QObject, QRect
-from PySide6.QtGui import QAction, QPainter, QPen, QFont, QColor, QResizeEvent, QPalette
 
-NET_MSG_PREFIX = "NET::"
-REQ_REMATCH = NET_MSG_PREFIX + "REQ_REMATCH"
-ACK_REMATCH = NET_MSG_PREFIX + "ACK_REMATCH"
-DEC_REMATCH = NET_MSG_PREFIX + "DEC_REMATCH"
-
-class GameLogic:
-    def __init__(self):
-        self.board_size = 3
-        self.game_board = [['' for _ in range(self.board_size)] for _ in range(self.board_size)]
-        self.game_over = False
-        self.winner = None
-        self.move_count = 0
-
-    def make_move(self, row, col, player):
-        if not self.game_over and 0 <= row < self.board_size and 0 <= col < self.board_size and self.game_board[row][col] == '':
-            self.game_board[row][col] = player
-            self.move_count += 1
-            if self.check_win(player):
-                self.game_over = True; self.winner = player; return "win"
-            elif self.check_draw():
-                self.game_over = True; self.winner = None; return "draw"
-            return "continue"
-        return "invalid"
-
-    def check_win(self, player):
-        board = self.game_board; size = self.board_size
-        for i in range(size):
-            if all(board[i][j] == player for j in range(size)) or \
-               all(board[j][i] == player for j in range(size)): return True
-        if all(board[i][i] == player for i in range(size)) or \
-           all(board[i][size - 1 - i] == player for i in range(size)): return True
-        return False
-
-    def check_draw(self):
-        return self.move_count == self.board_size * self.board_size and not self.winner
-
-    def is_cell_empty(self, row, col):
-        if 0 <= row < self.board_size and 0 <= col < self.board_size:
-            return self.game_board[row][col] == ''
-        return False
-
-    def reset_game(self):
-        self.game_board = [['' for _ in range(self.board_size)] for _ in range(self.board_size)]
-        self.game_over = False; self.winner = None; self.move_count = 0
-
-
-class NetworkWorker(QObject):
-    connected = Signal()
-    disconnected = Signal(str)
-    move_received = Signal(int, int)
-    status_update = Signal(str)
-    error_occurred = Signal(str)
-    assign_player_symbol = Signal(str)
-    rematch_request_received = Signal()
-    rematch_accepted = Signal()
-    rematch_declined = Signal()
-
-    def __init__(self):
-        super().__init__()
-        self.socket = None
-        self.server_socket = None
-        self.host_ip = ""
-        self.port = 0
-        self.is_hosting = False
-        self._running = False
-        self.connection_thread = None
-
-    def _start_connection_thread(self, target_func, args_tuple):
-        if self.connection_thread and self.connection_thread.is_alive(): return
-        self._running = True
-        self.connection_thread = threading.Thread(target=target_func, args=args_tuple, daemon=True)
-        self.connection_thread.start()
-
-    @Slot(str, int)
-    def start_hosting(self, host_ip, port):
-        self.host_ip = host_ip; self.port = port; self.is_hosting = True
-        self._start_connection_thread(self._host_thread_func, ())
-
-    @Slot(str, int)
-    def start_connecting(self, host_ip, port):
-        self.host_ip = host_ip; self.port = port; self.is_hosting = False
-        self._start_connection_thread(self._connect_thread_func, ())
-
-    def _host_thread_func(self):
-        self.server_socket = None
-        try:
-            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.server_socket.bind((self.host_ip, self.port))
-            self.server_socket.listen(1)
-            self.status_update.emit(f"Listening on {self.host_ip}:{self.port}. Waiting...")
-            self.server_socket.settimeout(1.0)
-            client_socket = None
-            while self._running and client_socket is None:
-                try:
-                    client_socket, addr = self.server_socket.accept()
-                except socket.timeout:
-                    continue
-                except Exception as e:
-                     if self._running: self.error_occurred.emit(f"Accept Error: {e}")
-                     self._running = False
-                     break
-
-            if self.server_socket:
-                self.server_socket.settimeout(None)
-
-            if not self._running:
-                if client_socket: client_socket.close()
-                if not hasattr(self, '_explicit_stop') or not self._explicit_stop:
-                     print("Hosting stopped while waiting for connection.")
-                return
-
-            if client_socket:
-                self.socket = client_socket
-                self.status_update.emit(f"Opponent connected from {addr[0]}:{addr[1]}")
-                self.assign_player_symbol.emit('X'); self.connected.emit()
-                self._handle_connection()
-
-        except (socket.error, ConnectionAbortedError) as e:
-            if self._running: self.error_occurred.emit(f"Hosting Error: {e}")
-        except Exception as e:
-             if self._running: self.error_occurred.emit(f"Unexpected Hosting Error: {e}")
-        finally:
-            serv_sock = self.server_socket
-            self.server_socket = None
-            if serv_sock:
-                try:
-                    serv_sock.close()
-                    print("Server socket closed in finally block.")
-                except OSError: pass
-
-    def _connect_thread_func(self):
-        try:
-            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.status_update.emit(f"Connecting to {self.host_ip}:{self.port}...")
-            client_socket.settimeout(10.0)
-            client_socket.connect((self.host_ip, self.port))
-            client_socket.settimeout(None)
-
-            if not self._running: client_socket.close(); raise ConnectionAbortedError("Connection stopped.")
-            self.socket = client_socket
-            self.status_update.emit("Connected to host.")
-            self.assign_player_symbol.emit('O'); self.connected.emit()
-            self._handle_connection()
-        except socket.timeout:
-             if self._running: self.error_occurred.emit(f"Connection timed out to {self.host_ip}:{self.port}.")
-        except socket.gaierror:
-             if self._running: self.error_occurred.emit(f"Address error connecting to {self.host_ip}. Check IP.")
-        except (socket.error, ConnectionAbortedError) as e:
-            if self._running: self.error_occurred.emit(f"Connection Error: {e}. Is host running?")
-        except Exception as e:
-             if self._running: self.error_occurred.emit(f"Unexpected Connection Error: {e}")
-        finally:
-            if not self._running and self.socket:
-                 try: self.socket.close()
-                 except OSError: pass
-                 self.socket = None
-
-
-    def _handle_connection(self):
-        while self._running and self.socket:
-            try:
-                data = self.socket.recv(1024)
-                if not data:
-                    if self._running: self.disconnected.emit("Opponent disconnected.")
-                    self._running = False; break
-
-                message = data.decode('utf-8')
-
-                if message.startswith(NET_MSG_PREFIX):
-                    if message == REQ_REMATCH:
-                        self.rematch_request_received.emit()
-                    elif message == ACK_REMATCH:
-                        self.rematch_accepted.emit()
-                    elif message == DEC_REMATCH:
-                        self.rematch_declined.emit()
-                    else:
-                        print(f"Received unknown network message: {message}")
-                else:
-                    parts = message.split(',')
-                    if len(parts) == 2:
-                        row, col = int(parts[0]), int(parts[1])
-                        if 0 <= row <= 2 and 0 <= col <= 2:
-                            self.move_received.emit(row, col)
-                        else:
-                            print(f"Received out-of-bounds move: {message}")
-                    else:
-                        print(f"Received malformed move data: {message}")
-
-            except ConnectionResetError:
-                if self._running: self.disconnected.emit("Connection lost.")
-                self._running = False; break
-            except socket.error as e:
-                if self._running: self.disconnected.emit(f"Socket Error: {e}")
-                self._running = False; break
-            except ValueError: print(f"Received non-integer move data: {message}")
-            except Exception as e:
-                if self._running: self.disconnected.emit(f"Receive Error: {e}")
-                self._running = False; break
-        sock = self.socket
-        self.socket = None
-        if sock:
-            try: sock.close()
-            except OSError: pass
-
-    def _send_message(self, message):
-        if self.socket and self._running:
-            try:
-                self.socket.sendall(message.encode('utf-8'))
-                return True
-            except socket.error as e:
-                if self._running:
-                    self.disconnected.emit(f"Send Error: {e}")
-                self._running = False
-                if self.socket:
-                    try:
-                        self.socket.close()
-                    except OSError:
-                        pass
-                    self.socket = None
-            except Exception as e:
-                 if self._running:
-                     self.disconnected.emit(f"Unexpected Send Error: {e}")
-                 self._running = False
-                 if self.socket:
-                     try:
-                         self.socket.close()
-                     except OSError:
-                         pass
-                     self.socket = None
-        return False
-
-    @Slot(int, int)
-    def send_move(self, row, col):
-        move_str = f"{row},{col}"
-        self._send_message(move_str)
-
-    @Slot()
-    def send_rematch_request(self):
-        self._send_message(REQ_REMATCH)
-
-    @Slot()
-    def send_rematch_accept(self):
-        self._send_message(ACK_REMATCH)
-
-    @Slot()
-    def send_rematch_decline(self):
-        self._send_message(DEC_REMATCH)
-
-
-    @Slot()
-    def stop(self):
-        if not self._running: return
-        print("Stopping network worker...")
-        self._explicit_stop = True
-        self._running = False
-
-        sock = self.socket
-        self.socket = None
-        if sock:
-            try: sock.shutdown(socket.SHUT_RDWR)
-            except OSError: pass
-            try: sock.close(); print("Client socket closed by stop().")
-            except OSError as e: print(f"Error closing client socket during stop: {e}")
-
-        serv_sock = self.server_socket
-        self.server_socket = None
-        if serv_sock:
-            try: serv_sock.close(); print("Server socket closed by stop().")
-            except OSError as e: print(f"Error closing server socket during stop: {e}")
-        self._explicit_stop = False
-
-
-class BoardWidget(QWidget):
-    cell_clicked = Signal(int, int)
-    def __init__(self, game_logic, parent=None):
-        super().__init__(parent)
-        self.game_logic = game_logic
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
-        self.setMinimumSize(QSize(150, 150))
-        self._accept_clicks = True
-
-    def set_accept_clicks(self, accept): self._accept_clicks = accept
-    def heightForWidth(self, width): return width
-    def hasHeightForWidth(self): return True
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        try:
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            w = self.width(); h = self.height(); side = min(w, h)
-            offset_x = (w - side) / 2; offset_y = (h - side) / 2
-            painter.fillRect(self.rect(), QColor("#333"))
-            size = self.game_logic.board_size; cell_size = side / size
-            pen = QPen(QColor("#555"), 2); painter.setPen(pen)
-            for i in range(1, size):
-                x = offset_x + i * cell_size; painter.drawLine(int(x), int(offset_y), int(x), int(offset_y + side))
-                y = offset_y + i * cell_size; painter.drawLine(int(offset_x), int(y), int(offset_x + side), int(y))
-            for row in range(size):
-                for col in range(size):
-                    symbol = self.game_logic.game_board[row][col]
-                    if symbol:
-                        center_x = offset_x + col * cell_size + cell_size / 2
-                        center_y = offset_y + row * cell_size + cell_size / 2
-                        radius = cell_size / 2 * 0.7
-                        if symbol == 'X':
-                            pen = QPen(QColor("#8acaff"), 4); painter.setPen(pen)
-                            painter.drawLine(QPointF(center_x - radius, center_y - radius), QPointF(center_x + radius, center_y + radius))
-                            painter.drawLine(QPointF(center_x + radius, center_y - radius), QPointF(center_x - radius, center_y + radius))
-                        else:
-                            pen = QPen(QColor("#ff8a8a"), 4); painter.setPen(pen)
-                            painter.drawEllipse(QPointF(center_x, center_y), radius, radius)
-            if self.game_logic.game_over and self.game_logic.winner:
-                winner = self.game_logic.winner
-                font = QFont("Arial", int(side * 0.6), QFont.Bold); painter.setFont(font)
-                color = QColor("#8acaff") if winner == 'X' else QColor("#ff8a8a")
-                pen = QPen(color, 10, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin); painter.setPen(pen)
-                draw_rect = QRect(int(offset_x), int(offset_y), int(side), int(side))
-                painter.drawText(draw_rect, Qt.AlignCenter, winner)
-        finally: pass
-
-    def mouseReleaseEvent(self, event):
-        if not self._accept_clicks or self.game_logic.game_over: return
-        w = self.width(); h = self.height(); side = min(w, h)
-        offset_x = (w - side) / 2; offset_y = (h - side) / 2
-        if not (offset_x <= event.position().x() < offset_x + side and offset_y <= event.position().y() < offset_y + side): return
-        cell_size = side / self.game_logic.board_size;
-        if cell_size <= 0: return
-        click_x = event.position().x() - offset_x; click_y = event.position().y() - offset_y
-        col = int(click_x // cell_size); row = int(click_y // cell_size)
-        row = max(0, min(row, self.game_logic.board_size - 1))
-        col = max(0, min(col, self.game_logic.board_size - 1))
-        self.cell_clicked.emit(row, col)
-
+from PySide6.QtGui import QAction, QFont
+from PySide6.QtCore import Qt, QThread, Slot
 
 class TicTacToeWindow(QMainWindow):
     def __init__(self):
@@ -436,7 +111,7 @@ class TicTacToeWindow(QMainWindow):
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(0.1); s.connect(('10.254.254.254', 1))
             ip = s.getsockname()[0]
             if ip == '127.0.0.1':
-                 hostname = socket.gethostname(); ip = socket.gethostbyname(hostname)
+                hostname = socket.gethostname(); ip = socket.gethostbyname(hostname)
             return ip
         except Exception: return None
         finally:
@@ -696,7 +371,6 @@ class TicTacToeWindow(QMainWindow):
         self._explicit_stop = False
         print("Network worker stopped.")
 
-
     @Slot()
     def reset_game(self):
         print("Resetting game..."); self._reset_in_progress = True
@@ -712,18 +386,3 @@ class TicTacToeWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._stop_network_worker(); event.accept()
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv); app.setStyle("Fusion")
-    palette = QPalette()
-    palette.setColor(QPalette.Window, QColor(53, 53, 53)); palette.setColor(QPalette.WindowText, Qt.white)
-    palette.setColor(QPalette.Base, QColor(35, 35, 35)); palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
-    palette.setColor(QPalette.ToolTipBase, Qt.white); palette.setColor(QPalette.ToolTipText, Qt.black)
-    palette.setColor(QPalette.Text, Qt.white); palette.setColor(QPalette.Button, QColor(66, 66, 66))
-    palette.setColor(QPalette.ButtonText, Qt.white); palette.setColor(QPalette.BrightText, Qt.red)
-    palette.setColor(QPalette.Link, QColor(42, 130, 218)); palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
-    palette.setColor(QPalette.HighlightedText, Qt.white)
-    palette.setColor(QPalette.Disabled, QPalette.Text, QColor(127, 127, 127)); palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(127, 127, 127))
-    palette.setColor(QPalette.Disabled, QPalette.WindowText, QColor(127, 127, 127))
-    app.setPalette(palette)
-    window = TicTacToeWindow(); window.show(); sys.exit(app.exec())
