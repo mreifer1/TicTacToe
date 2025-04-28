@@ -95,9 +95,9 @@ class TicTacToeWindow(QMainWindow):
         ip_layout.addWidget(self.ip_address_input)
         layout.addLayout(ip_layout)
         self.port = 9999
-        btn = QPushButton("Start Hosting")
-        btn.clicked.connect(self._start_or_connect_network_game)
-        layout.addWidget(btn, alignment=Qt.AlignCenter)
+        self.start_network_button = QPushButton("Start Hosting")
+        self.start_network_button.clicked.connect(self._start_or_connect_network_game)
+        layout.addWidget(self.start_network_button, alignment=Qt.AlignCenter)
         self.network_controls_group.setLayout(layout)
 
     def _get_local_ip(self):
@@ -131,6 +131,13 @@ class TicTacToeWindow(QMainWindow):
         self.ip_address_input.setPlaceholderText(
             "Enter Host IP" if is_client else "Your IP (auto)"
         )
+        # swap the button label
+        if is_client:
+            self.start_network_button.setText("Connect to Host")
+        else:
+            self.start_network_button.setText("Start Hosting")
+
+        
         # reset ip text
         if not is_client:
             ip = self._get_local_ip()
@@ -248,9 +255,9 @@ class TicTacToeWindow(QMainWindow):
         self.is_my_turn = (self.my_symbol==self.who_started_last_round)
         self.board_widget.set_accept_clicks(self.is_my_turn)
         if self.is_my_turn:
-            self._update_message(f"your ({self.my_symbol}) turn.", is_turn=True)
+            self._update_message(f"Your ({self.my_symbol}) turn.", is_turn=True)
         else:
-            txt = f"waiting for opponent ('{self.opponent_symbol}') move..."
+            txt = f"Waiting for opponent ('{self.opponent_symbol}') move..."
             self._update_message(txt)
         self._update_rematch_buttons_visibility()
 
@@ -262,7 +269,7 @@ class TicTacToeWindow(QMainWindow):
     def _on_network_disconnected(self, reason):
         # handle abrupt disconnect
         if self.game_mode!='local':
-            self._update_message(f"disconnected: {reason}", is_error=True)
+            self._update_message(f"Disconnected: {reason}", is_error=True)
             QMessageBox.information(self, "Disconnected", reason)
             self.reset_game()
 
@@ -270,7 +277,7 @@ class TicTacToeWindow(QMainWindow):
     def _on_network_error(self, err):
         # show error + revert to local
         if self.game_mode!='local':
-            self._update_message(f"network error: {err}", is_error=True)
+            self._update_message(f"Network error: {err}", is_error=True)
             QMessageBox.critical(self, "Network Error", err)
             self._stop_network_worker()
             self._update_network_ui_state(True)
@@ -301,37 +308,48 @@ class TicTacToeWindow(QMainWindow):
 
     @Slot(int, int)
     def _on_cell_clicked(self, r, c):
-        # handle player click: local vs network
-        if self.game_logic.game_over: return
-        if self.game_mode=='local':
-            # local play alternates
-            p = 'X' if self.game_logic.move_count%2==0 else 'O'
+        # ignore clicks after game over
+        if self.game_logic.game_over:
+            return
+
+        # ——— LOCAL MODE ———
+        if self.game_mode == 'local':
+            p = 'X' if self.game_logic.move_count % 2 == 0 else 'O'
             res = self.game_logic.make_move(r, c, p)
-            if res!="invalid":
+            if res != "invalid":
                 self.board_widget.update()
-                if res=="win": 
-                    self._handle_game_over(f"player {self.game_logic.winner} wins!", True)
-                elif res=="draw": 
+                if res == "win":
+                    self._handle_game_over(f"player {p} wins!", True)
+                elif res == "draw":
                     self._handle_game_over("it's a draw!", True)
-                else: 
-                    nxt = 'X' if self.game_logic.move_count%2==0 else 'O'
+                else:
+                    nxt = 'X' if self.game_logic.move_count % 2 == 0 else 'O'
                     self._update_message(f"player {nxt}'s turn")
-            # network play
-            if not self.is_my_turn:
-                self._update_message("not your turn", is_error=True); return
-            if self.game_logic.is_cell_empty(r, c):
-                res = self.game_logic.make_move(r, c, self.my_symbol)
-                self.board_widget.update()
-                if self.network_worker and self.network_worker._running:
-                    self.network_worker.send_move(r, c)
-                if res=="win": self._handle_game_over(f"you ({self.my_symbol}) win!", True)
-                elif res=="draw": self._handle_game_over("it's a draw!", True)
-                elif res=="continue":
-                    self.is_my_turn=False
-                    self.board_widget.set_accept_clicks(False)
-                    self._update_message(f"waiting for opponent ('{self.opponent_symbol}') move...")
+            return  # prevent falling into network logic
+
+        # ——— NETWORK MODE ———
+        # only allow click if it's your turn
+        if not self.is_my_turn:
+            self._update_message("not your turn", is_error=True)
+            return
+
+        if self.game_logic.is_cell_empty(r, c):
+            res = self.game_logic.make_move(r, c, self.my_symbol)
+            self.board_widget.update()
+            if self.network_worker and self.network_worker._running:
+                self.network_worker.send_move(r, c)
+            if res == "win":
+                self._handle_game_over(f"You ({self.my_symbol}) win!", True)
+            elif res == "draw":
+                self._handle_game_over("it's a draw!", True)
             else:
-                self._update_message("cell taken", is_error=True)
+                self.is_my_turn = False
+                self.board_widget.set_accept_clicks(False)
+                self._update_message(
+                    f"waiting for opponent ('{self.opponent_symbol}') move..."
+                )
+        else:
+            self._update_message("cell taken", is_error=True)
 
     @Slot(int, int)
     def _on_move_received(self, r, c):
@@ -339,12 +357,12 @@ class TicTacToeWindow(QMainWindow):
         if self.game_logic.game_over or self.game_mode=='local': return
         res = self.game_logic.make_move(r, c, self.opponent_symbol)
         self.board_widget.update()
-        if res=="win": self._handle_game_over(f"opponent ({self.opponent_symbol}) wins!", False)
-        elif res=="draw": self._handle_game_over("it's a draw!", True)
+        if res=="win": self._handle_game_over(f"Opponent ({self.opponent_symbol}) wins!", False)
+        elif res=="draw": self._handle_game_over("It's a draw!", True)
         elif res=="continue":
             self.is_my_turn=True
             self.board_widget.set_accept_clicks(True)
-            self._update_message(f"your ({self.my_symbol}) turn!", is_turn=True)
+            self._update_message(f"Your ({self.my_symbol}) turn!", is_turn=True)
 
     @Slot()
     def _request_rematch(self):
@@ -362,7 +380,7 @@ class TicTacToeWindow(QMainWindow):
         # decline and stay in game over
         self.network_worker.send_rematch_decline()
         self.rematch_requested_by_opponent=False
-        self._update_message("rematch declined.")
+        self._update_message("Rematch declined.")
         self._update_rematch_buttons_visibility()
 
     @Slot()
@@ -370,14 +388,14 @@ class TicTacToeWindow(QMainWindow):
         # got rematch ask
         if self.game_logic.game_over:
             self.rematch_requested_by_opponent=True
-            self._update_message("opponent wants rematch")
+            self._update_message("Opponent wants rematch")
             self._update_rematch_buttons_visibility()
 
     @Slot()
     def _handle_rematch_accepted(self):
         # opponent agreed
         if self.rematch_requested_by_me:
-            self._update_message("rematch accepted")
+            self._update_message("Rematch accepted")
             self._start_new_round()
 
     @Slot()
@@ -385,7 +403,7 @@ class TicTacToeWindow(QMainWindow):
         # opponent declined
         if self.rematch_requested_by_me:
             self.rematch_requested_by_me=False
-            self._update_message("rematch declined")
+            self._update_message("Rematch declined")
             self._update_rematch_buttons_visibility()
 
     def _start_new_round(self):
@@ -398,9 +416,9 @@ class TicTacToeWindow(QMainWindow):
         self.board_widget.update()
         self._update_rematch_buttons_visibility()
         if self.is_my_turn:
-            self._update_message(f"new round your ({self.my_symbol}) turn", is_turn=True)
+            self._update_message(f"New round your ({self.my_symbol}) turn", is_turn=True)
         else:
-            self._update_message(f"new round waiting for opponent", is_turn=False)
+            self._update_message(f"New round waiting for opponent", is_turn=False)
 
     def _stop_network_worker(self):
         # stop thread + sockets
