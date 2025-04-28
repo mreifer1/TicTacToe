@@ -210,7 +210,7 @@ class TicTacToeWindow(QMainWindow):
             self.game_mode='host'
             host_ip = ip or self._get_local_ip()
             if not host_ip or host_ip=='127.0.0.1':
-                self._update_message("enter valid host ip", is_error=True)
+                self._update_message("Enter valid host ip", is_error=True)
                 return
             self.ip_address_input.setText(host_ip)
             self._setup_and_start_worker()
@@ -218,7 +218,7 @@ class TicTacToeWindow(QMainWindow):
         else:
             self.game_mode='client'
             if not ip:
-                QMessageBox.warning(self, "Network Error", "enter host ip")
+                QMessageBox.warning(self, "Network Error", "Enter host ip")
                 return
             self._setup_and_start_worker()
             self.network_worker.start_connecting(ip, self.port)
