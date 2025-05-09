@@ -40,6 +40,15 @@ How two players connect and exchange moves.
 - **Dedicated Network Handler:**
   - Logic is encapsulated in the `NetworkWorker` class.
 
+--
+```python
+# setup listening socket
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.bind((self.host_ip, self.port))
+        self.server_socket.listen(1)
+```
+
 ---
 
 ### The `NetworkWorker` Class
